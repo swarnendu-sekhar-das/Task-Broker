@@ -1,0 +1,8 @@
+*.md
+*.dSYM/
+broker
+producer
+worker
+test_heap
+.DS_Store
+*.wal
