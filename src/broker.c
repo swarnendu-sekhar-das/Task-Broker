@@ -6,8 +6,19 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <pthread.h>
 
 #define PORT 8080
+
+void* client_handler(void* arg) {
+    int client_fd = *(int*)arg;
+    free(arg); // Free the memory allocated in accept loop
+
+    // TODO: Protocol Framing & Parsing
+
+    close(client_fd);
+    return NULL;
+}
 
 int main() {
     // Ignore SIGPIPE to prevent server crashes on dead sockets
@@ -43,7 +54,31 @@ int main() {
 
     printf("TaskBroker initialized. Listening on port %d...\n", PORT);
 
-    // TODO: accept loop
+    while (1) {
+        struct sockaddr_in client_address;
+        socklen_t client_len = sizeof(client_address);
+        int* client_fd = malloc(sizeof(int)); // Allocate memory for the fd
+        
+        *client_fd = accept(server_fd, (struct sockaddr *)&client_address, &client_len);
+        if (*client_fd < 0) {
+            perror("accept failed");
+            free(client_fd);
+            continue;
+        }
+
+        // Spawn a new detached thread for each client
+        pthread_t thread_id;
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        
+        if (pthread_create(&thread_id, &attr, client_handler, (void*)client_fd) != 0) {
+            perror("pthread_create failed");
+            close(*client_fd);
+            free(client_fd);
+        }
+        pthread_attr_destroy(&attr);
+    }
     
     close(server_fd);
     return 0;
