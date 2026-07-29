@@ -137,6 +137,8 @@ int main() {
         fprintf(stderr, "Failed to initialize WAL\n");
         exit(EXIT_FAILURE);
     }
+    
+    wal_recover(global_heap);
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == -1) {
