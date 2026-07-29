@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include "heap.h"
+#include "wal.h"
 
 #define PORT 8080
 
@@ -54,6 +55,9 @@ void* client_handler(void* arg) {
                         strncpy(new_job->cmd, payload_str, MAX_CMD_LEN - 1);
                         new_job->cmd[MAX_CMD_LEN - 1] = '\0';
                         
+                        // WAL Write BEFORE taking the lock
+                        wal_append_push(new_job->id, new_job->priority, new_job->cmd);
+                        
                         pthread_mutex_lock(&heap_mutex);
                         heap_push(global_heap, new_job);
                         pthread_cond_signal(&heap_cond); // Wake up one sleeping consumer
@@ -84,7 +88,12 @@ void* client_handler(void* arg) {
                     // Format: ACK|id
                     char* id_str = strtok_r(NULL, "|", &saveptr);
                     if (id_str) {
-                        printf("Parsed ACK: id=%s\n", id_str);
+                        int ack_id = atoi(id_str);
+                        printf("Parsed ACK: id=%d\n", ack_id);
+                        
+                        // WAL Tombstone BEFORE taking the lock
+                        wal_append_ack(ack_id);
+                        
                         pthread_mutex_lock(&heap_mutex);
                         if (in_flight[client_fd] != NULL) {
                             free(in_flight[client_fd]);
@@ -123,6 +132,11 @@ int main() {
     signal(SIGPIPE, SIG_IGN);
     
     global_heap = heap_create(1024);
+    
+    if (wal_init("taskbroker.wal") != 0) {
+        fprintf(stderr, "Failed to initialize WAL\n");
+        exit(EXIT_FAILURE);
+    }
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == -1) {
