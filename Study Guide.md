@@ -673,6 +673,7 @@ Deliberate simplicity: direct-address table, O(1) insert and O(1) lookup by Job 
 | WAL Growth | No compaction | Known; production fix: Snapshot + incremental replay |
 
 
+
 ## Code Explanation
 
 Here is a detailed line-by-line explanation of every code file in the project.
@@ -898,8 +899,7 @@ Lines 11-19: Initializes the WAL by duplicating the filepath and opening it in w
 21: void wal_append_push(int id, int priority, const char* cmd) {
 22:     if (wal_fd < 0) return;
 23:     char buffer[512];
-24:     int len = snprintf(buffer, sizeof(buffer), "PUSH|%d|%d|%s
-", id, priority, cmd);
+24:     int len = snprintf(buffer, sizeof(buffer), "PUSH|%d|%d|%s\n", id, priority, cmd);
 25:     if (write(wal_fd, buffer, len) > 0) {
 26:         fsync(wal_fd); // Ensure durability
 27:     }
@@ -910,8 +910,7 @@ Lines 21-28: Formats a "PUSH" log entry and writes it to the WAL. `fsync` is use
 30: void wal_append_ack(int id) {
 31:     if (wal_fd < 0) return;
 32:     char buffer[256];
-33:     int len = snprintf(buffer, sizeof(buffer), "ACK|%d
-", id);
+33:     int len = snprintf(buffer, sizeof(buffer), "ACK|%d\n", id);
 34:     if (write(wal_fd, buffer, len) > 0) {
 35:         fsync(wal_fd);
 36:     }
@@ -924,8 +923,7 @@ Lines 30-37: Formats an "ACK" log entry (meaning a job was completed) and writes
 41:     FILE* file = fopen(wal_filepath, "r");
 42:     if (!file) return;
 43: 
-44:     printf("Recovering from WAL...
-");
+44:     printf("Recovering from WAL...\n");
 ```
 Lines 39-44: Opens the WAL file in read mode to reconstruct the state.
 ```c
@@ -945,8 +943,7 @@ Lines 50-53: Reads the file line by line. `strtok_r` safely splits each line usi
 55:         if (cmd && strcmp(cmd, "PUSH") == 0) {
 56:             char* id_str = strtok_r(NULL, "|", &saveptr);
 57:             char* prio_str = strtok_r(NULL, "|", &saveptr);
-58:             char* payload_str = strtok_r(NULL, "
-", &saveptr);
+58:             char* payload_str = strtok_r(NULL, "\n", &saveptr);
 59:             
 60:             if (id_str && prio_str && payload_str) {
 61:                 int id = atoi(id_str);
@@ -954,7 +951,7 @@ Lines 50-53: Reads the file line by line. `strtok_r` safely splits each line usi
 63:                 job->id = id;
 64:                 job->priority = atoi(prio_str);
 65:                 strncpy(job->cmd, payload_str, MAX_CMD_LEN - 1);
-66:                 job->cmd[MAX_CMD_LEN - 1] = ' ';
+66:                 job->cmd[MAX_CMD_LEN - 1] = '\0';
 67:                 
 68:                 if (id < 10000) {
 69:                     active_jobs[id] = job;
@@ -966,8 +963,7 @@ Lines 50-53: Reads the file line by line. `strtok_r` safely splits each line usi
 Lines 55-73: If the log is a "PUSH", it parses the ID, priority, and payload, allocates a new `Job`, and stores it in the `active_jobs` array.
 ```c
 73:         else if (cmd && strcmp(cmd, "ACK") == 0) {
-74:             char* id_str = strtok_r(NULL, "
-", &saveptr);
+74:             char* id_str = strtok_r(NULL, "\n", &saveptr);
 75:             if (id_str) {
 76:                 int id = atoi(id_str);
 77:                 if (id < 10000 && active_jobs[id] != NULL) {
@@ -991,8 +987,7 @@ Lines 73-83: If the log is an "ACK", the corresponding job was successfully proc
 92:         }
 93:     }
 94:     
-95:     printf("WAL Recovery complete. %d jobs restored to Min-Heap.
-", recovered_count);
+95:     printf("WAL Recovery complete. %d jobs restored to Min-Heap.\n", recovered_count);
 96: }
 ```
 Lines 85-96: Closes the file, pushes any remaining active jobs (which were never ACKed) into the heap, and prints a summary.
@@ -1029,17 +1024,15 @@ Lines 9-29: Setup for the TCP socket and connection to the broker at `127.0.0.1:
 Lines 31-36: Defines a receive buffer and determines how many jobs to request (default 10, or provided via command line).
 ```c
 38:     for (int i = 0; i < num_jobs; i++) {
-39:         const char *pop_msg = "POP
-";
+39:         const char *pop_msg = "POP\n";
 40:         send(sock, pop_msg, strlen(pop_msg), 0);
-41:         printf("Sent POP
-");
+41:         printf("Sent POP\n");
 ```
 Lines 38-41: Loops to request jobs. Sends a "POP" command to the broker to ask for the next job.
 ```c
 43:         int bytes_read = read(sock, buffer, 1024);
 44:         if (bytes_read > 0) {
-45:             buffer[bytes_read] = ' ';
+45:             buffer[bytes_read] = '\0';
 46:             printf("Received Job: %s", buffer);
 ```
 Lines 43-46: Reads the response from the broker and null-terminates the string to safely print it.
@@ -1049,10 +1042,8 @@ Lines 43-46: Reads the response from the broker and null-terminates the string t
 ```
 Lines 48-49: Sleeps for 500,000 microseconds (500ms) to simulate the time taken to process the job.
 ```c
-51:             // Parse job ID from response (Assume Format: JOB|id|priority|payload
-)
-52:             // For now, if it's "EMPTY
-", just continue
+51:             // Parse job ID from response (Assume Format: JOB|id|priority|payload\n)
+52:             // For now, if it's "EMPTY\n", just continue
 53:             if (strncmp(buffer, "EMPTY", 5) == 0) {
 54:                 continue;
 55:             }
@@ -1065,8 +1056,7 @@ Lines 51-55: If the broker replied with "EMPTY", meaning there are no jobs in th
 60:                 char* id_token = strtok_r(NULL, "|", &saveptr);
 61:                 if (id_token) {
 62:                     char ack_msg[256];
-63:                     snprintf(ack_msg, sizeof(ack_msg), "ACK|%s
-", id_token);
+63:                     snprintf(ack_msg, sizeof(ack_msg), "ACK|%s\n", id_token);
 64:                     send(sock, ack_msg, strlen(ack_msg), 0);
 65:                     printf("Sent %s", ack_msg);
 66:                 }
@@ -1075,8 +1065,7 @@ Lines 51-55: If the broker replied with "EMPTY", meaning there are no jobs in th
 Lines 57-67: Parses the response. If it starts with "JOB", it extracts the job ID and sends an "ACK" message back to the broker to confirm the job was completed.
 ```c
 68:         } else {
-69:             printf("Server disconnected
-");
+69:             printf("Server disconnected\n");
 70:             break;
 71:         }
 72:     }
@@ -1125,16 +1114,14 @@ Lines 20-22: The thread function for handling an individual connected client (pr
 Lines 24-32: A loop that continuously reads data from the client into a buffer. If `read` returns <= 0, the client disconnected and the loop breaks.
 ```c
 34:         buffer_len += bytes_read;
-35:         buffer[buffer_len] = ' ';
+35:         buffer[buffer_len] = '\0';
 36:         
 37:         // Find newline for TCP stream framing
 38:         char* newline;
-39:         while ((newline = strchr(buffer, '
-')) != NULL) {
-40:             *newline = ' '; // Null-terminate the string at newline
+39:         while ((newline = strchr(buffer, '\n')) != NULL) {
+40:             *newline = '\0'; // Null-terminate the string at newline
 ```
-Lines 34-40: Because TCP is a stream, it splits incoming data into individual commands based on the newline `
-` character.
+Lines 34-40: Because TCP is a stream, it splits incoming data into individual commands based on the newline `\n` character.
 ```c
 42:             char* saveptr;
 43:             char* cmd = strtok_r(buffer, "|", &saveptr);
@@ -1142,7 +1129,7 @@ Lines 34-40: Because TCP is a stream, it splits incoming data into individual co
 45:             if (cmd != NULL) {
 46:                 if (strcmp(cmd, "PUSH") == 0) {
 ...
-56:                         new_job->cmd[MAX_CMD_LEN - 1] = ' ';
+56:                         new_job->cmd[MAX_CMD_LEN - 1] = '\0';
 ```
 Lines 42-56: If the command is "PUSH", it extracts priority and payload, then allocates and sets up a new `Job`.
 ```c
@@ -1166,13 +1153,11 @@ Lines 66-75: If the command is "POP", it locks the heap. If the heap is empty, i
 77:                     if (job) {
 78:                         in_flight[client_fd] = job; // Track in-flight state
 79:                         char resp[512];
-80:                         snprintf(resp, sizeof(resp), "JOB|%d|%d|%s
-", job->id, job->priority, job->cmd);
+80:                         snprintf(resp, sizeof(resp), "JOB|%d|%d|%s\n", job->id, job->priority, job->cmd);
 81:                         write(client_fd, resp, strlen(resp));
 82:                         // No free(job) here, it's freed on ACK
 83:                     } else {
-84:                         const char* mock_resp = "EMPTY
-";
+84:                         const char* mock_resp = "EMPTY\n";
 85:                         write(client_fd, mock_resp, strlen(mock_resp));
 86:                     }
 ```
@@ -1191,7 +1176,7 @@ Lines 87-105: If the command is "ACK", it parses the ID, logs the ACK to the WAL
 109:             int remaining = buffer_len - consumed;
 110:             memmove(buffer, newline + 1, remaining);
 111:             buffer_len = remaining;
-112:             buffer[buffer_len] = ' ';
+112:             buffer[buffer_len] = '\0';
 113:         }
 114:     }
 ```
@@ -1370,4 +1355,3 @@ Lines 39-46: Loop to generate `num_jobs` jobs. It formats a PUSH command with a 
 50: }
 ```
 Lines 48-50: Closes the socket connection and cleanly exits the program.
-
