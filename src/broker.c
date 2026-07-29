@@ -12,6 +12,7 @@
 #define PORT 8080
 
 pthread_mutex_t heap_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t heap_cond = PTHREAD_COND_INITIALIZER;
 MinHeap* global_heap;
 
 void* client_handler(void* arg) {
@@ -54,12 +55,17 @@ void* client_handler(void* arg) {
                         
                         pthread_mutex_lock(&heap_mutex);
                         heap_push(global_heap, new_job);
+                        pthread_cond_signal(&heap_cond); // Wake up one sleeping consumer
                         pthread_mutex_unlock(&heap_mutex);
                     }
                 } else if (strcmp(cmd, "POP") == 0) {
                     printf("Parsed POP\n");
                     
                     pthread_mutex_lock(&heap_mutex);
+                    while (global_heap->size == 0) {
+                        // Deep sleep until a job is pushed
+                        pthread_cond_wait(&heap_cond, &heap_mutex);
+                    }
                     Job* job = heap_pop(global_heap);
                     pthread_mutex_unlock(&heap_mutex);
                     
