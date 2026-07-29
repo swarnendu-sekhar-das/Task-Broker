@@ -14,7 +14,59 @@ void* client_handler(void* arg) {
     int client_fd = *(int*)arg;
     free(arg); // Free the memory allocated in accept loop
 
-    // TODO: Protocol Framing & Parsing
+    char buffer[2048];
+    int buffer_len = 0;
+
+    while (1) {
+        int bytes_read = read(client_fd, buffer + buffer_len, sizeof(buffer) - buffer_len - 1);
+        if (bytes_read <= 0) {
+            // Dead socket detection or clean disconnect
+            break;
+        }
+        
+        buffer_len += bytes_read;
+        buffer[buffer_len] = '\0';
+        
+        // Find newline for TCP stream framing
+        char* newline;
+        while ((newline = strchr(buffer, '\n')) != NULL) {
+            *newline = '\0'; // Null-terminate the string at newline
+            
+            char* saveptr;
+            char* cmd = strtok_r(buffer, "|", &saveptr);
+            
+            if (cmd != NULL) {
+                if (strcmp(cmd, "PUSH") == 0) {
+                    // Format: PUSH|priority|payload
+                    char* priority_str = strtok_r(NULL, "|", &saveptr);
+                    char* payload_str = strtok_r(NULL, "|", &saveptr);
+                    if (priority_str && payload_str) {
+                        printf("Parsed PUSH: prio=%s, payload=%s\n", priority_str, payload_str);
+                        // TODO: push to heap
+                    }
+                } else if (strcmp(cmd, "POP") == 0) {
+                    printf("Parsed POP\n");
+                    // TODO: pop from heap and send
+                    const char* mock_resp = "EMPTY\n";
+                    write(client_fd, mock_resp, strlen(mock_resp));
+                } else if (strcmp(cmd, "ACK") == 0) {
+                    // Format: ACK|id
+                    char* id_str = strtok_r(NULL, "|", &saveptr);
+                    if (id_str) {
+                        printf("Parsed ACK: id=%s\n", id_str);
+                        // TODO: process ACK (tombstone)
+                    }
+                }
+            }
+            
+            // Shift remaining data to start of buffer
+            int consumed = (newline - buffer) + 1;
+            int remaining = buffer_len - consumed;
+            memmove(buffer, newline + 1, remaining);
+            buffer_len = remaining;
+            buffer[buffer_len] = '\0';
+        }
+    }
 
     close(client_fd);
     return NULL;
