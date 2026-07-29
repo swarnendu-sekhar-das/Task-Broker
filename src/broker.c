@@ -14,6 +14,7 @@
 pthread_mutex_t heap_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t heap_cond = PTHREAD_COND_INITIALIZER;
 MinHeap* global_heap;
+Job* in_flight[1024] = {NULL};
 
 void* client_handler(void* arg) {
     int client_fd = *(int*)arg;
@@ -70,10 +71,11 @@ void* client_handler(void* arg) {
                     pthread_mutex_unlock(&heap_mutex);
                     
                     if (job) {
+                        in_flight[client_fd] = job; // Track in-flight state
                         char resp[512];
                         snprintf(resp, sizeof(resp), "JOB|%d|%d|%s\n", job->id, job->priority, job->cmd);
                         write(client_fd, resp, strlen(resp));
-                        free(job);
+                        // No free(job) here, it's freed on ACK
                     } else {
                         const char* mock_resp = "EMPTY\n";
                         write(client_fd, mock_resp, strlen(mock_resp));
@@ -83,7 +85,12 @@ void* client_handler(void* arg) {
                     char* id_str = strtok_r(NULL, "|", &saveptr);
                     if (id_str) {
                         printf("Parsed ACK: id=%s\n", id_str);
-                        // TODO: process ACK (tombstone)
+                        pthread_mutex_lock(&heap_mutex);
+                        if (in_flight[client_fd] != NULL) {
+                            free(in_flight[client_fd]);
+                            in_flight[client_fd] = NULL;
+                        }
+                        pthread_mutex_unlock(&heap_mutex);
                     }
                 }
             }
@@ -96,6 +103,16 @@ void* client_handler(void* arg) {
             buffer[buffer_len] = '\0';
         }
     }
+
+    // Dead socket detection / Clean disconnect
+    pthread_mutex_lock(&heap_mutex);
+    if (in_flight[client_fd] != NULL) {
+        printf("Client %d disconnected with un-ACKed job. Re-queuing job %d...\n", client_fd, in_flight[client_fd]->id);
+        heap_push(global_heap, in_flight[client_fd]);
+        pthread_cond_signal(&heap_cond); // Wake up another worker for this job
+        in_flight[client_fd] = NULL;
+    }
+    pthread_mutex_unlock(&heap_mutex);
 
     close(client_fd);
     return NULL;
