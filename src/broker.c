@@ -7,8 +7,12 @@
 #include <arpa/inet.h>
 #include <signal.h>
 #include <pthread.h>
+#include "heap.h"
 
 #define PORT 8080
+
+pthread_mutex_t heap_mutex = PTHREAD_MUTEX_INITIALIZER;
+MinHeap* global_heap;
 
 void* client_handler(void* arg) {
     int client_fd = *(int*)arg;
@@ -42,13 +46,32 @@ void* client_handler(void* arg) {
                     char* payload_str = strtok_r(NULL, "|", &saveptr);
                     if (priority_str && payload_str) {
                         printf("Parsed PUSH: prio=%s, payload=%s\n", priority_str, payload_str);
-                        // TODO: push to heap
+                        Job* new_job = (Job*)malloc(sizeof(Job));
+                        new_job->id = rand() % 10000;
+                        new_job->priority = atoi(priority_str);
+                        strncpy(new_job->cmd, payload_str, MAX_CMD_LEN - 1);
+                        new_job->cmd[MAX_CMD_LEN - 1] = '\0';
+                        
+                        pthread_mutex_lock(&heap_mutex);
+                        heap_push(global_heap, new_job);
+                        pthread_mutex_unlock(&heap_mutex);
                     }
                 } else if (strcmp(cmd, "POP") == 0) {
                     printf("Parsed POP\n");
-                    // TODO: pop from heap and send
-                    const char* mock_resp = "EMPTY\n";
-                    write(client_fd, mock_resp, strlen(mock_resp));
+                    
+                    pthread_mutex_lock(&heap_mutex);
+                    Job* job = heap_pop(global_heap);
+                    pthread_mutex_unlock(&heap_mutex);
+                    
+                    if (job) {
+                        char resp[512];
+                        snprintf(resp, sizeof(resp), "JOB|%d|%d|%s\n", job->id, job->priority, job->cmd);
+                        write(client_fd, resp, strlen(resp));
+                        free(job);
+                    } else {
+                        const char* mock_resp = "EMPTY\n";
+                        write(client_fd, mock_resp, strlen(mock_resp));
+                    }
                 } else if (strcmp(cmd, "ACK") == 0) {
                     // Format: ACK|id
                     char* id_str = strtok_r(NULL, "|", &saveptr);
@@ -75,6 +98,8 @@ void* client_handler(void* arg) {
 int main() {
     // Ignore SIGPIPE to prevent server crashes on dead sockets
     signal(SIGPIPE, SIG_IGN);
+    
+    global_heap = heap_create(1024);
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == -1) {
