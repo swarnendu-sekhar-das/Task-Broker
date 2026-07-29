@@ -6,10 +6,19 @@ LDFLAGS = -pthread
 # CFLAGS += -fsanitize=thread
 # LDFLAGS += -fsanitize=thread
 
-all: test_heap
+all: test_heap broker producer worker
 
 test_heap: tests/test_heap.c src/heap.c
 	$(CC) $(CFLAGS) -Isrc $^ -o $@ $(LDFLAGS)
 
+broker: src/broker.c src/heap.c
+	$(CC) $(CFLAGS) -Isrc $^ -o $@ $(LDFLAGS)
+
+producer: src/producer.c
+	$(CC) $(CFLAGS) -Isrc $^ -o $@
+
+worker: src/worker.c
+	$(CC) $(CFLAGS) -Isrc $^ -o $@
+
 clean:
-	rm -f test_heap broker worker producer
+	rm -f test_heap broker producer worker
