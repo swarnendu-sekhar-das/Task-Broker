@@ -102,7 +102,7 @@ Job* heap_pop(MinHeap* heap) {
 
 **Question:** Imagine the broker receives a massive spike of traffic, and 100,000 jobs are pushed into the queue at once. If we had used a standard sorted Linked List instead of a Min-Heap, exactly why would the system catastrophically fail under this load? Compare the Big-O time complexity of inserting a job into our Min-Heap vs inserting into a sorted Linked List.
 
-**Your Answer:** I twould take order n time because we have to do a linear scan to find the correct position as compared to logn in heap latency would spike.
+**Your Answer:** It would take order n time because we have to do a linear scan to find the correct position as compared to logn in heap latency would spike.
 
 **Correction/Validation:** Spot on! Exactly correct. At 100,000 jobs, a linked list would require 100,000 comparisons (a linear scan) per insertion, completely blocking the server. The Min-Heap requires at most ~17 comparisons ($log_2(100,000)$), meaning latency remains perfectly flat even under massive load.
 
