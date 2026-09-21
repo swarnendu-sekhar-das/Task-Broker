@@ -15,7 +15,19 @@
 pthread_mutex_t heap_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t heap_cond = PTHREAD_COND_INITIALIZER;
 MinHeap* global_heap;
-Job* in_flight[1024] = {NULL};
+Job** in_flight = NULL;
+unsigned int global_id_counter = 1;
+long max_fds = 1024;
+
+ssize_t send_all(int fd, const void* buf, size_t len) {
+    size_t total = 0;
+    while (total < len) {
+        ssize_t sent = write(fd, (const char*)buf + total, len - total);
+        if (sent <= 0) return sent;
+        total += sent;
+    }
+    return total;
+}
 
 void* client_handler(void* arg) {
     int client_fd = *(int*)arg;
@@ -50,7 +62,7 @@ void* client_handler(void* arg) {
                     if (priority_str && payload_str) {
                         printf("Parsed PUSH: prio=%s, payload=%s\n", priority_str, payload_str);
                         Job* new_job = (Job*)malloc(sizeof(Job));
-                        new_job->id = rand() % 10000;
+                        new_job->id = __sync_fetch_and_add(&global_id_counter, 1);
                         new_job->priority = atoi(priority_str);
                         strncpy(new_job->cmd, payload_str, MAX_CMD_LEN - 1);
                         new_job->cmd[MAX_CMD_LEN - 1] = '\0';
@@ -75,14 +87,16 @@ void* client_handler(void* arg) {
                     pthread_mutex_unlock(&heap_mutex);
                     
                     if (job) {
-                        in_flight[client_fd] = job; // Track in-flight state
+                        if (client_fd < max_fds) {
+                            in_flight[client_fd] = job; // Track in-flight state
+                        }
                         char resp[512];
                         snprintf(resp, sizeof(resp), "JOB|%d|%d|%s\n", job->id, job->priority, job->cmd);
-                        write(client_fd, resp, strlen(resp));
+                        send_all(client_fd, resp, strlen(resp));
                         // No free(job) here, it's freed on ACK
                     } else {
                         const char* mock_resp = "EMPTY\n";
-                        write(client_fd, mock_resp, strlen(mock_resp));
+                        send_all(client_fd, mock_resp, strlen(mock_resp));
                     }
                 } else if (strcmp(cmd, "ACK") == 0) {
                     // Format: ACK|id
@@ -95,7 +109,7 @@ void* client_handler(void* arg) {
                         wal_append_ack(ack_id);
                         
                         pthread_mutex_lock(&heap_mutex);
-                        if (in_flight[client_fd] != NULL) {
+                        if (client_fd < max_fds && in_flight[client_fd] != NULL) {
                             free(in_flight[client_fd]);
                             in_flight[client_fd] = NULL;
                         }
@@ -115,7 +129,7 @@ void* client_handler(void* arg) {
 
     // Dead socket detection / Clean disconnect
     pthread_mutex_lock(&heap_mutex);
-    if (in_flight[client_fd] != NULL) {
+    if (client_fd < max_fds && in_flight[client_fd] != NULL) {
         printf("Client %d disconnected with un-ACKed job. Re-queuing job %d...\n", client_fd, in_flight[client_fd]->id);
         heap_push(global_heap, in_flight[client_fd]);
         pthread_cond_signal(&heap_cond); // Wake up another worker for this job
@@ -139,6 +153,10 @@ int main() {
     }
     
     wal_recover(global_heap);
+
+    max_fds = sysconf(_SC_OPEN_MAX);
+    if (max_fds <= 0) max_fds = 1024;
+    in_flight = calloc(max_fds, sizeof(Job*));
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == -1) {

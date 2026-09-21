@@ -19,6 +19,11 @@ MinHeap* heap_create(int initial_capacity) {
 void heap_free(MinHeap* heap) {
     if (heap) {
         if (heap->array) {
+            for (int i = 0; i < heap->size; i++) {
+                if (heap->array[i]) {
+                    free(heap->array[i]);
+                }
+            }
             free(heap->array);
         }
         free(heap);
