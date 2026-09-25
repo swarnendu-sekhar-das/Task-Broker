@@ -152,7 +152,10 @@ int main() {
         exit(EXIT_FAILURE);
     }
     
-    wal_recover(global_heap);
+    unsigned int max_recovered_id = wal_recover(global_heap);
+    if (max_recovered_id >= global_id_counter) {
+        global_id_counter = max_recovered_id + 1;
+    }
 
     max_fds = sysconf(_SC_OPEN_MAX);
     if (max_fds <= 0) max_fds = 1024;

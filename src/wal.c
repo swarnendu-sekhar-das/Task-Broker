@@ -36,15 +36,16 @@ void wal_append_ack(int id) {
     }
 }
 
-void wal_recover(MinHeap* heap) {
-    if (!wal_filepath) return;
+int wal_recover(MinHeap* heap) {
+    if (!wal_filepath) return 0;
     FILE* file = fopen(wal_filepath, "r");
-    if (!file) return;
+    if (!file) return 0;
 
     printf("Recovering from WAL...\n");
 
-    // Simple fixed-size hash map for active jobs based on ID
-    Job* active_jobs[10000] = {NULL};
+    // Dynamic array for active jobs based on ID
+    int capacity = 10000;
+    Job** active_jobs = (Job**)calloc(capacity, sizeof(Job*));
     int max_id = 0;
 
     char line[1024];
@@ -65,16 +66,20 @@ void wal_recover(MinHeap* heap) {
                 strncpy(job->cmd, payload_str, MAX_CMD_LEN - 1);
                 job->cmd[MAX_CMD_LEN - 1] = '\0';
                 
-                if (id < 10000) {
-                    active_jobs[id] = job;
-                    if (id > max_id) max_id = id;
+                if (id >= capacity) {
+                    int old_capacity = capacity;
+                    while (id >= capacity) capacity *= 2;
+                    active_jobs = (Job**)realloc(active_jobs, capacity * sizeof(Job*));
+                    memset(active_jobs + old_capacity, 0, (capacity - old_capacity) * sizeof(Job*));
                 }
+                active_jobs[id] = job;
+                if (id > max_id) max_id = id;
             }
         } else if (cmd && strcmp(cmd, "ACK") == 0) {
             char* id_str = strtok_r(NULL, "\n", &saveptr);
             if (id_str) {
                 int id = atoi(id_str);
-                if (id < 10000 && active_jobs[id] != NULL) {
+                if (id < capacity && active_jobs[id] != NULL) {
                     free(active_jobs[id]);
                     active_jobs[id] = NULL;
                 }
@@ -92,5 +97,7 @@ void wal_recover(MinHeap* heap) {
         }
     }
     
+    free(active_jobs);
     printf("WAL Recovery complete. %d jobs restored to Min-Heap.\n", recovered_count);
+    return max_id;
 }
